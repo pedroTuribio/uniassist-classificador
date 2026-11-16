@@ -1,0 +1,132 @@
+PARECER TÉCNICO - CLASSIFICADOR DE MENSAGENS DA UNIASSIST
+Disciplina: (preencher)   Trio: (nome 1, nome 2, nome 3)   Data: 16/11/2026
+
+1. OBJETIVO
+Comparar duas soluções para encaminhar automaticamente mensagens de estudantes ao
+setor responsável (Financeiro, Secretaria, Suporte TI e Biblioteca):
+  - Solução A: regras com palavras-chave pré-definidas. Mensagens sem
+    correspondência ou com empate vão para revisão humana.
+  - Solução B: Machine Learning (Pipeline com TfidfVectorizer + LinearSVC).
+
+2. METODOLOGIA
+- Base: 80 mensagens rotuladas (20 por setor), escritas pelo grupo.
+- Divisão estratificada: 75% treino (60) e 25% teste (20), random_state=42.
+- Ambos os métodos foram avaliados no MESMO conjunto de teste.
+- Métricas: acurácia, relatório de classificação e matriz de confusão.
+- Nas regras, o encaminhamento para REVISAO_HUMANA conta como erro na
+  acurácia (a mensagem não foi classificada automaticamente).
+- Reprodução: python -m pip install -r requirements.txt
+              python uniassist_pln.py
+
+3. RESULTADOS NO CONJUNTO DE TESTE (20 mensagens)
+                         Regras      ML (TF-IDF + LinearSVC)
+Acurácia                 0,900       0,700
+F1 macro                 0,94        0,66
+Erros (de 20)            2           6
+
+Regras: 2 erros, ambos encaminhados à revisão humana (uma mensagem de TI
+com "erro" + "disciplina" em empate/sem pontuação suficiente, e uma de
+Biblioteca sobre "comutação bibliográfica", sem palavra-chave). Nenhuma mensagem
+foi enviada ao setor errado: precisão 1,00 em todos os setores.
+ML: 6 erros, todos com setor trocado (ex.: "Preciso da ficha catalográfica para
+o meu TCC" foi para Suporte TI; "Quero cancelar a cobrança recorrente no meu
+cartão" foi para Secretaria). Biblioteca teve recall de apenas 0,20.
+
+4. INTERPRETAÇÃO DAS MÉTRICAS E DIFERENÇAS OBSERVADAS
+- A acurácia sozinha esconde o padrão dos erros. No ML, Biblioteca tem precisão
+  1,00 mas recall 0,20 (F1 0,33): o modelo raramente prevê Biblioteca, e quando
+  prevê acerta. Em contrapartida, Suporte TI tem recall 1,00 e precisão 0,62,
+  pois recebe mensagens que não são suas (3 de Biblioteca). A matriz de
+  confusão mostra isso: 3 das 5 mensagens de Biblioteca foram para Suporte TI.
+- Nas regras, a precisão é 1,00 e a perda está no recall (0,80 em Biblioteca e
+  em Suporte TI), ou seja, o método é conservador: prefere não classificar a
+  classificar errado.
+- A vantagem das regras NÃO prova que "regras são melhores que ML". (1) O
+  dicionário de palavras-chave foi escrito conhecendo o vocabulário do domínio,
+  o que favorece as regras. (2) O ML aprendeu com apenas 60 exemplos, pouco
+  para o TF-IDF separar bem os setores; termos genéricos pesam demais.
+- O conjunto de teste tem só 20 mensagens: cada erro vale 5 pontos percentuais,
+  então a comparação tem muita incerteza.
+- Com centenas ou milhares de mensagens reais, o ML tende a generalizar melhor
+  que as regras (que exigem manutenção manual do dicionário).
+
+5. FALHAS IDENTIFICADAS
+Regras:
+  - Vocabulário fechado: "comutação bibliográfica" não casou com nenhuma regra.
+  - Empates em mensagens com termos de mais de um setor.
+  - Sensível a sinônimos, gírias, erros de digitação e mensagens sem palavra-chave.
+  - A contagem de palavras pode dar falsa segurança: muitos termos de um setor
+    não significam que o problema seja dele.
+  - Manutenção manual: cada novo termo exige alteração no código.
+ML:
+  - Depende da quantidade e da qualidade dos dados rotulados.
+  - Sempre devolve uma classe, mesmo para mensagem vazia de conteúdo ("Bom dia,
+    tudo bem?" foi classificada como Secretaria): falsa confiança.
+  - Menos explicável: é difícil justificar um erro individual.
+  - Um único rótulo por mensagem, mas uma mensagem pode envolver vários setores.
+
+6. ANÁLISE DE MENSAGENS AMBÍGUAS (8 mensagens inéditas)
+Saída completa no script. Casos mais desafiadores:
+
+(a) "Não posso acessar o boleto porque esqueci minha senha."
+    Regras: revisão humana (Financeiro 1 x Suporte TI 1, empate). ML: Suporte TI
+    (2º lugar: Financeiro, margem 0,68). Há duas demandas: recuperar a senha
+    (TI) e obter o boleto (Financeiro). O ML escolheu TI com margem alta, o que
+    é confiança, mas ignora a segunda demanda. A ação ideal é resolver a senha
+    (TI) e depois orientar o boleto, ou enviar ao Financeiro com cópia ao TI.
+
+(b) "Quero trancar a matrícula, mas tenho mensalidades em aberto."
+    Regras: Secretaria (2 x 1). ML: Secretaria, mas com margem de só 0,09 em
+    relação a Financeiro, quase empate. Ambos concordam, porém a pendência
+    financeira pode impedir o trancamento, então os dois setores precisam atuar.
+
+(c) "Fui cobrado multa da biblioteca e quero contestar o valor."
+    Regras: Financeiro (2 x 1). ML: Financeiro (margem 0,12 sobre Biblioteca). O
+    assunto nasce na Biblioteca (a multa), mas a contestação do valor é do
+    Financeiro; tipicamente exige os dois.
+
+(d) "Meu histórico escolar não aparece no portal do aluno."
+    Regras: revisão humana (Secretaria 1 x TI 1). ML: Suporte TI (margem 0,22
+    sobre Secretaria). Pode ser falha técnica (TI) ou histórico não emitido
+    (Secretaria); só a triagem resolve.
+
+(e) "Bom dia, tudo bem? Gostaria de uma informação."
+    Regras: revisão humana (comportamento correto). ML: Secretaria, sem
+    fundamento. O ML precisa de um limiar/classe de "não sei".
+
+Também: a mensagem 5 ("Não consigo entrar no sistema para reservar o livro da
+biblioteca") tem Biblioteca 4 x TI 1 nas regras, e o ML concorda, mas com
+margem baixa (0,22). Nas mensagens 2 e 7 os métodos concordaram com margem
+confortável (0,44 e 0,39), mas ainda envolvem mais de um setor: concordância
+entre os métodos não garante que a mensagem seja de um setor só.
+
+7. POLÍTICA PROPOSTA PARA MENSAGENS AMBÍGUAS
+1. Usar ML e regras em conjunto: o ML sugere, as regras validam.
+2. Encaminhar automaticamente SOMENTE se: (i) a margem entre os dois maiores
+   scores do modelo for >= 0,30 e (ii) as regras não resultarem em empate ou
+   sem correspondência. É o critério de encaminhar_com_politica() no código.
+   Com ele, 6 das 8 mensagens inéditas foram para triagem humana e 2 foram
+   encaminhadas automaticamente (mensagens 2 e 7).
+3. A triagem humana deve receber os dois setores mais prováveis para agilizar.
+4. Mensagens com mais de uma demanda (ex.: senha + boleto) devem ser divididas
+   ou encaminhadas ao setor principal com cópia ao secundário.
+5. Mensagens sem conteúdo útil recebem resposta automática pedindo detalhes.
+6. Registrar as decisões da triagem humana e usá-las para rotular novos
+   exemplos e retreinar o modelo periodicamente.
+7. Monitorar métricas por setor (não só a acurácia global) e a taxa de
+   encaminhamento à triagem. O limiar de 0,30 é empírico e deve ser calibrado
+   com mais dados.
+
+8. LIMITAÇÕES DESTE ESTUDO
+- Base pequena e escrita pelo próprio grupo (não são mensagens reais).
+- Conjunto de teste de apenas 20 mensagens: resultados com alta variância.
+- Palavras-chave definidas conhecendo a base, o que favorece as regras.
+- Sem validação cruzada nem ajuste de hiperparâmetros.
+- As mensagens inéditas não têm rótulo único correto: análise qualitativa.
+
+9. CONCLUSÃO
+No cenário testado, as regras tiveram acurácia maior (90% x 70%) e falham de
+forma segura (vão para revisão humana). O ML, com poucos dados, troca setores
+e mostra falsa confiança. Para a UniAssist, recomenda-se uma solução híbrida:
+regras para casos claros e explicáveis, ML para generalizar conforme a base
+real cresce, e triagem humana para ambiguidades, com retroalimentação contínua.
